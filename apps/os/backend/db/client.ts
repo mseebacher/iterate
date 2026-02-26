@@ -148,8 +148,21 @@ export const getDb = () => {
   return drizzleNeon({ client: pool, schema, casing: "snake_case" });
 };
 
-/** Accepts any env-like object with DATABASE_URL (used by DurableObjects) */
-export const getDbWithEnv = (envParam: { DATABASE_URL: string }) => {
+/** Accepts any env-like object with DATABASE_URL (used by DurableObjects).
+ *  DOs inherit all worker bindings at runtime, so HYPERDRIVE is available
+ *  when deployed — prefer it over the Neon WS fallback. */
+export const getDbWithEnv = (envParam: {
+  DATABASE_URL: string;
+  HYPERDRIVE?: { connectionString: string };
+}) => {
+  if (envParam.HYPERDRIVE?.connectionString) {
+    const pool = new RetryPgPool({
+      connectionString: envParam.HYPERDRIVE.connectionString,
+      max: 3,
+    });
+    return drizzlePg({ client: pool, schema, casing: "snake_case" });
+  }
+
   const pool = new RetryNeonPool({
     connectionString: envParam.DATABASE_URL,
     max: 3,
