@@ -5,6 +5,7 @@ import { CronExpressionParser } from "cron-parser";
 import alchemy, { type Scope } from "alchemy";
 import {
   DurableObjectNamespace,
+  Hyperdrive,
   TanStackStart,
   Tunnel,
   WorkerLoader,
@@ -718,10 +719,22 @@ async function deployWorker(dbConfig: { DATABASE_URL: string }, envSecrets: EnvS
   //   4. Show the user DNS instructions (CNAME to fallback.iterate.app)
   // The allowedDomains/routeHosts arrays above don't need custom domains — CF for SaaS handles routing.
 
+  // Hyperdrive accelerates DB connections via Cloudflare's connection pooling.
+  // Only provisioned in deployed environments (stg/prd) — local dev falls back
+  // to the Neon WebSocket driver via DATABASE_URL.
+  const hyperdriveBinding = isDevelopment
+    ? undefined
+    : await Hyperdrive("os-db", {
+        origin: dbConfig.DATABASE_URL,
+        caching: { disabled: true },
+        adopt: true,
+      });
+
   const worker = await TanStackStart("os", {
     bindings: {
       ...dbConfig,
       ...envSecrets,
+      ...(hyperdriveBinding ? { HYPERDRIVE: hyperdriveBinding } : {}),
       SELF: Self,
       WORKER_LOADER: WorkerLoader(),
       ALLOWED_DOMAINS: allowedDomains.join(","),
