@@ -99,7 +99,7 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
 class RetryPgPool extends PgPool {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pool.query has many overloads
   async query(...args: any[]): Promise<any> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- super.query typing mismatch
     return withRetry(() => (super.query as any)(...args));
   }
 }
@@ -111,7 +111,7 @@ class RetryPgPool extends PgPool {
 class RetryNeonPool extends NeonPool {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pool.query has many overloads
   async query(...args: any[]): Promise<any> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- super.query typing mismatch
     return withRetry(() => (super.query as any)(...args));
   }
 }
