@@ -113,7 +113,7 @@ class RetryNeonPool extends NeonPool {
  * Prefers Hyperdrive binding (TCP via pg driver) when available,
  * falls back to Neon WebSocket driver with DATABASE_URL.
  */
-export const getDb = () => {
+export const getDb = async () => {
   // Hyperdrive exposes a connectionString on the binding at runtime.
   // env.HYPERDRIVE is typed via alchemy — it's the Cloudflare Hyperdrive binding.
   const hyperdrive = (env as Record<string, unknown>).HYPERDRIVE as
@@ -124,7 +124,7 @@ export const getDb = () => {
     // Hyperdrive manages connection pooling server-side — use a plain Client
     // per request (Cloudflare's recommended pattern) to avoid double-pooling.
     const client = new PgClient({ connectionString: hyperdrive.connectionString });
-    client.connect();
+    await client.connect();
     return drizzlePg({ client, schema, casing: "snake_case" });
   }
 
@@ -139,13 +139,13 @@ export const getDb = () => {
 /** Accepts any env-like object with DATABASE_URL (used by DurableObjects).
  *  DOs inherit all worker bindings at runtime, so HYPERDRIVE is available
  *  when deployed — prefer it over the Neon WS fallback. */
-export const getDbWithEnv = (envParam: {
+export const getDbWithEnv = async (envParam: {
   DATABASE_URL: string;
   HYPERDRIVE?: { connectionString: string };
 }) => {
   if (envParam.HYPERDRIVE?.connectionString) {
     const client = new PgClient({ connectionString: envParam.HYPERDRIVE.connectionString });
-    client.connect();
+    await client.connect();
     return drizzlePg({ client, schema, casing: "snake_case" });
   }
 
@@ -156,4 +156,4 @@ export const getDbWithEnv = (envParam: {
   return drizzleNeon({ client: pool, schema, casing: "snake_case" });
 };
 
-export type DB = ReturnType<typeof getDb>;
+export type DB = Awaited<ReturnType<typeof getDb>>;
