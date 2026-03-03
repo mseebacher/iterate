@@ -39,7 +39,6 @@
     "@iterate-com/shared": "workspace:*",
     "@mariozechner/pi-ai": "^0.42.0",
     "@mariozechner/pi-coding-agent": "^0.42.0",
-    "@neondatabase/serverless": "^1.0.2",
     "pg": "^8.17.1",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.206.0",

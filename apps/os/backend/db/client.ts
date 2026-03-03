@@ -1,22 +1,8 @@
-import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
-import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
-import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
-import type { PoolConfig as NeonPoolConfig } from "@neondatabase/serverless";
-import { Pool as PgPool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
+import { Pool } from "pg";
 import { env } from "../../env.ts";
 import { logger } from "../tag-logger.ts";
 import * as schema from "./schema.ts";
-
-// ---------------------------------------------------------------------------
-// Neon WebSocket configuration (only used when Hyperdrive is unavailable)
-// ---------------------------------------------------------------------------
-neonConfig.webSocketConstructor = WebSocket;
-neonConfig.pipelineConnect = false;
-neonConfig.useSecureWebSocket = !env.DATABASE_URL?.includes("localhost");
-neonConfig.wsProxy = (host, port) =>
-  host === "localhost"
-    ? `localhost:${env.LOCAL_DOCKER_NEON_PROXY_PORT}/v2?address=${host}:${port}`
-    : `${host}/v2?address=${host}:${port}`;
 
 // ---------------------------------------------------------------------------
 // Transient error detection & retry logic
@@ -35,7 +21,7 @@ const TRANSIENT_PG_CODES = new Set([
 
 /**
  * Determines if a query error is transient and safe to retry.
- * Covers connection drops, WebSocket failures, TCP resets, and Postgres transient SQLSTATE codes.
+ * Covers connection drops, TCP resets, and Postgres transient SQLSTATE codes.
  * Also walks the `cause` chain (e.g. DrizzleQueryError wrapping a DatabaseError).
  */
 export function isTransientError(err: unknown): boolean {
@@ -53,7 +39,6 @@ export function isTransientError(err: unknown): boolean {
     if (msg.includes("ECONNRESET")) return true;
     if (msg.includes("ECONNREFUSED")) return true;
     if (msg.includes("socket hang up")) return true;
-    if (msg.includes("WebSocket")) return true;
     if (msg.includes("fetch failed")) return true;
 
     const code = (current as { code?: string }).code;
@@ -89,14 +74,13 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Retry Pool wrapper (Neon fallback only)
+// Retry Pool wrapper
 // ---------------------------------------------------------------------------
 
 /**
- * Neon Pool with automatic retry on transient failures.
- * Used as fallback when Hyperdrive is unavailable (local dev, DurableObjects).
+ * pg Pool with automatic retry on transient failures.
  */
-class RetryNeonPool extends NeonPool {
+class RetryPool extends Pool {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pool.query has many overloads
   async query(...args: any[]): Promise<any> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- super.query typing mismatch
@@ -109,56 +93,41 @@ class RetryNeonPool extends NeonPool {
 // ---------------------------------------------------------------------------
 
 /**
- * Creates a drizzle DB instance.
- * Prefers Hyperdrive binding (TCP via pg driver) when available,
- * falls back to Neon WebSocket driver with DATABASE_URL.
+ * Returns the connection string to use for the DB pool.
+ * In deployed environments, Hyperdrive provides a local TCP proxy connection
+ * string. In dev, falls back to DATABASE_URL.
  */
-export const getDb = () => {
-  // Hyperdrive exposes a connectionString on the binding at runtime.
-  // env.HYPERDRIVE is typed via alchemy — it's the Cloudflare Hyperdrive binding.
+function getConnectionString(): string {
   const hyperdrive = (env as Record<string, unknown>).HYPERDRIVE as
     | { connectionString: string }
     | undefined;
+  return hyperdrive?.connectionString ?? env.DATABASE_URL;
+}
 
-  if (hyperdrive?.connectionString) {
-    // Hyperdrive manages connection pooling server-side — use a Pool with
-    // max:1 so we get a single connection per request (no double-pooling)
-    // while Pool handles connect() automatically on first query.
-    const pool = new PgPool({
-      connectionString: hyperdrive.connectionString,
-      max: 1,
-    });
-    return drizzlePg({ client: pool, schema, casing: "snake_case" });
-  }
-
-  // Fallback: Neon WebSocket driver (local dev, or if Hyperdrive not bound)
-  const pool = new RetryNeonPool({
-    connectionString: env.DATABASE_URL,
-    max: 3,
-  } as NeonPoolConfig);
-  return drizzleNeon({ client: pool, schema, casing: "snake_case" });
+/**
+ * Creates a drizzle DB instance.
+ * Uses Hyperdrive connection string when available (deployed envs),
+ * falls back to DATABASE_URL (local dev).
+ */
+export const getDb = () => {
+  const pool = new RetryPool({
+    connectionString: getConnectionString(),
+    max: 1,
+  });
+  return drizzle({ client: pool, schema, casing: "snake_case" });
 };
 
-/** Accepts any env-like object with DATABASE_URL (used by DurableObjects).
- *  DOs inherit all worker bindings at runtime, so HYPERDRIVE is available
- *  when deployed — prefer it over the Neon WS fallback. */
+/** Accepts any env-like object with DATABASE_URL (used by DurableObjects). */
 export const getDbWithEnv = (envParam: {
   DATABASE_URL: string;
   HYPERDRIVE?: { connectionString: string };
 }) => {
-  if (envParam.HYPERDRIVE?.connectionString) {
-    const pool = new PgPool({
-      connectionString: envParam.HYPERDRIVE.connectionString,
-      max: 1,
-    });
-    return drizzlePg({ client: pool, schema, casing: "snake_case" });
-  }
-
-  const pool = new RetryNeonPool({
-    connectionString: envParam.DATABASE_URL,
-    max: 3,
-  } as NeonPoolConfig);
-  return drizzleNeon({ client: pool, schema, casing: "snake_case" });
+  const connectionString = envParam.HYPERDRIVE?.connectionString ?? envParam.DATABASE_URL;
+  const pool = new RetryPool({
+    connectionString,
+    max: 1,
+  });
+  return drizzle({ client: pool, schema, casing: "snake_case" });
 };
 
 export type DB = ReturnType<typeof getDb>;
