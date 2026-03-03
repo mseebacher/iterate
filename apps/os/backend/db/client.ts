@@ -2,7 +2,7 @@ import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
 import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
 import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import type { PoolConfig as NeonPoolConfig } from "@neondatabase/serverless";
-import { Pool as PgPool } from "pg";
+import { Client as PgClient } from "pg";
 import { env } from "../../env.ts";
 import { logger } from "../tag-logger.ts";
 import * as schema from "./schema.ts";
@@ -89,20 +89,8 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 // ---------------------------------------------------------------------------
-// Retry Pool wrappers
+// Retry Pool wrapper (Neon fallback only)
 // ---------------------------------------------------------------------------
-
-/**
- * pg Pool with automatic retry on transient failures.
- * Used with Hyperdrive (TCP path).
- */
-class RetryPgPool extends PgPool {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Pool.query has many overloads
-  async query(...args: any[]): Promise<any> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- super.query typing mismatch
-    return withRetry(() => (super.query as any)(...args));
-  }
-}
 
 /**
  * Neon Pool with automatic retry on transient failures.
@@ -133,11 +121,11 @@ export const getDb = () => {
     | undefined;
 
   if (hyperdrive?.connectionString) {
-    const pool = new RetryPgPool({
-      connectionString: hyperdrive.connectionString,
-      max: 3,
-    });
-    return drizzlePg({ client: pool, schema, casing: "snake_case" });
+    // Hyperdrive manages connection pooling server-side — use a plain Client
+    // per request (Cloudflare's recommended pattern) to avoid double-pooling.
+    const client = new PgClient({ connectionString: hyperdrive.connectionString });
+    client.connect();
+    return drizzlePg({ client, schema, casing: "snake_case" });
   }
 
   // Fallback: Neon WebSocket driver (local dev, or if Hyperdrive not bound)
@@ -156,11 +144,9 @@ export const getDbWithEnv = (envParam: {
   HYPERDRIVE?: { connectionString: string };
 }) => {
   if (envParam.HYPERDRIVE?.connectionString) {
-    const pool = new RetryPgPool({
-      connectionString: envParam.HYPERDRIVE.connectionString,
-      max: 3,
-    });
-    return drizzlePg({ client: pool, schema, casing: "snake_case" });
+    const client = new PgClient({ connectionString: envParam.HYPERDRIVE.connectionString });
+    client.connect();
+    return drizzlePg({ client, schema, casing: "snake_case" });
   }
 
   const pool = new RetryNeonPool({
