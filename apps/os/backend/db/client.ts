@@ -2,7 +2,7 @@ import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
 import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
 import { Pool as NeonPool, neonConfig } from "@neondatabase/serverless";
 import type { PoolConfig as NeonPoolConfig } from "@neondatabase/serverless";
-import { Client as PgClient } from "pg";
+import { Pool as PgPool } from "pg";
 import { env } from "../../env.ts";
 import { logger } from "../tag-logger.ts";
 import * as schema from "./schema.ts";
@@ -113,7 +113,7 @@ class RetryNeonPool extends NeonPool {
  * Prefers Hyperdrive binding (TCP via pg driver) when available,
  * falls back to Neon WebSocket driver with DATABASE_URL.
  */
-export const getDb = async () => {
+export const getDb = () => {
   // Hyperdrive exposes a connectionString on the binding at runtime.
   // env.HYPERDRIVE is typed via alchemy — it's the Cloudflare Hyperdrive binding.
   const hyperdrive = (env as Record<string, unknown>).HYPERDRIVE as
@@ -121,11 +121,14 @@ export const getDb = async () => {
     | undefined;
 
   if (hyperdrive?.connectionString) {
-    // Hyperdrive manages connection pooling server-side — use a plain Client
-    // per request (Cloudflare's recommended pattern) to avoid double-pooling.
-    const client = new PgClient({ connectionString: hyperdrive.connectionString });
-    await client.connect();
-    return drizzlePg({ client, schema, casing: "snake_case" });
+    // Hyperdrive manages connection pooling server-side — use a Pool with
+    // max:1 so we get a single connection per request (no double-pooling)
+    // while Pool handles connect() automatically on first query.
+    const pool = new PgPool({
+      connectionString: hyperdrive.connectionString,
+      max: 1,
+    });
+    return drizzlePg({ client: pool, schema, casing: "snake_case" });
   }
 
   // Fallback: Neon WebSocket driver (local dev, or if Hyperdrive not bound)
@@ -139,14 +142,16 @@ export const getDb = async () => {
 /** Accepts any env-like object with DATABASE_URL (used by DurableObjects).
  *  DOs inherit all worker bindings at runtime, so HYPERDRIVE is available
  *  when deployed — prefer it over the Neon WS fallback. */
-export const getDbWithEnv = async (envParam: {
+export const getDbWithEnv = (envParam: {
   DATABASE_URL: string;
   HYPERDRIVE?: { connectionString: string };
 }) => {
   if (envParam.HYPERDRIVE?.connectionString) {
-    const client = new PgClient({ connectionString: envParam.HYPERDRIVE.connectionString });
-    await client.connect();
-    return drizzlePg({ client, schema, casing: "snake_case" });
+    const pool = new PgPool({
+      connectionString: envParam.HYPERDRIVE.connectionString,
+      max: 1,
+    });
+    return drizzlePg({ client: pool, schema, casing: "snake_case" });
   }
 
   const pool = new RetryNeonPool({
@@ -156,4 +161,4 @@ export const getDbWithEnv = async (envParam: {
   return drizzleNeon({ client: pool, schema, casing: "snake_case" });
 };
 
-export type DB = Awaited<ReturnType<typeof getDb>>;
+export type DB = ReturnType<typeof getDb>;

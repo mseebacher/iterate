@@ -132,7 +132,7 @@ export class ApprovalCoordinator extends DurableObject<DurableObjectEnv> {
 
   private async updateTimeoutStatus(approvalId: string) {
     try {
-      const db = await getDbWithEnv(this.env);
+      const db = getDbWithEnv(this.env);
       await db
         .update(schema.egressApproval)
         .set({
