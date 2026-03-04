@@ -19,6 +19,25 @@ async function posthogSourcemaps(): Promise<PluginOption[]> {
   const projectId = process.env.POSTHOG_PROJECT_ID;
   if (!apiKey || !projectId) return [];
 
+  const stage = process.env.STAGE ?? process.env.APP_STAGE ?? process.env.VITE_APP_STAGE;
+  const githubRefType = process.env.GITHUB_REF_TYPE;
+  const githubRefName = process.env.GITHUB_REF_NAME;
+  const githubTag = githubRefType === "tag" ? githubRefName : undefined;
+  const githubSha = process.env.GITHUB_SHA;
+  const explicitReleaseName = process.env.RELEASE_NAME ?? process.env.POSTHOG_RELEASE_NAME;
+  let gitSha = "";
+  try {
+    gitSha = execSync("git rev-parse --short=12 HEAD", {
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .toString()
+      .trim();
+  } catch {
+    // git may not be available (e.g. some CI/build environments)
+  }
+  const buildId = explicitReleaseName ?? githubTag ?? githubSha?.slice(0, 12) ?? gitSha;
+  const releaseName = ["iterate-os", stage, buildId].filter(Boolean).join("-");
+
   const { default: posthog } = await import("@posthog/rollup-plugin");
   return [
     posthog({
@@ -27,7 +46,7 @@ async function posthogSourcemaps(): Promise<PluginOption[]> {
       host: "https://eu.i.posthog.com",
       sourcemaps: {
         enabled: true,
-        releaseName: "iterate-os",
+        releaseName,
         deleteAfterUpload: true,
       },
     }),
