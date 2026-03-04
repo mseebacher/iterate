@@ -39,8 +39,7 @@ async function posthogSourcemaps(): Promise<PluginOption[]> {
     explicitReleaseName ??
     githubTag ??
     githubSha?.slice(0, 12) ??
-    gitSha?.trim() ||
-    `ts-${Date.now()}`;
+    (gitSha?.trim() || `ts-${Date.now()}`);
   const releaseName = ["iterate-os", stage, buildId].filter(Boolean).join("-");
 
   const { default: posthog } = await import("@posthog/rollup-plugin");
