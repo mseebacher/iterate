@@ -25,7 +25,7 @@ async function posthogSourcemaps(): Promise<PluginOption[]> {
   const githubTag = githubRefType === "tag" ? githubRefName : undefined;
   const githubSha = process.env.GITHUB_SHA;
   const explicitReleaseName = process.env.RELEASE_NAME ?? process.env.POSTHOG_RELEASE_NAME;
-  let gitSha = "";
+  let gitSha: string | undefined;
   try {
     gitSha = execSync("git rev-parse --short=12 HEAD", {
       stdio: ["ignore", "pipe", "ignore"],
@@ -35,7 +35,12 @@ async function posthogSourcemaps(): Promise<PluginOption[]> {
   } catch {
     // git may not be available (e.g. some CI/build environments)
   }
-  const buildId = explicitReleaseName ?? githubTag ?? githubSha?.slice(0, 12) ?? gitSha;
+  const buildId =
+    explicitReleaseName ??
+    githubTag ??
+    githubSha?.slice(0, 12) ??
+    gitSha?.trim() ||
+    `ts-${Date.now()}`;
   const releaseName = ["iterate-os", stage, buildId].filter(Boolean).join("-");
 
   const { default: posthog } = await import("@posthog/rollup-plugin");
